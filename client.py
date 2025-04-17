@@ -388,8 +388,6 @@ class RemoteDesktopClient:
     def __init__(self, ui):
         super().__init__()
 
-        # todo : 用管理员身份运行
-
         # UI
         self.root = ui
 
