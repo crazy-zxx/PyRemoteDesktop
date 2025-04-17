@@ -91,7 +91,7 @@ class RemoteDesktopServer:
         except Exception as e:
             messagebox.showerror('提示', '启动监听失败！')
             print(e)
-            raise
+            # raise
 
     def accept_connections(self):
         while True:
@@ -140,7 +140,6 @@ class RemoteDesktopServer:
             except Exception as e:
                 self.destroy_connection(conn, addr)
                 print(e)
-                raise
                 # raise
 
     def start_monitoring(self, conn, addr):
@@ -270,7 +269,8 @@ class RemoteDesktopServer:
                 monitor_window.canvas.focus_set()
 
             except Exception as e:
-                raise
+                print(e)
+                # raise
 
     def send_control(self, conn, addr, canvas):
         # 平台

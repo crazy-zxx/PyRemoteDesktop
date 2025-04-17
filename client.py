@@ -555,7 +555,8 @@ class RemoteDesktopClient:
                 y = struct.unpack('>H', cmd[4:6])[0]
                 Op(key, op, x, y)
         except Exception as e:
-            raise
+            print(e)
+            # raise
 
     def hide_window(self):
         self.root.withdraw()
