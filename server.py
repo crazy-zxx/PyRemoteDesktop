@@ -137,8 +137,11 @@ class RemoteDesktopServer:
             try:
                 # 尝试发送一个空字节来检查连接
                 conn.sendall(b'')
-            except (socket.error, OSError):
+            except Exception as e:
                 self.destroy_connection(conn, addr)
+                print(e)
+                raise
+                # raise
 
     def start_monitoring(self, conn, addr):
         # 启动后禁用start_button按钮
@@ -203,8 +206,9 @@ class RemoteDesktopServer:
             connection['conn'].close()
             try:
                 connection['frame'].destroy()
-            except:
-                pass
+            except Exception as e:
+                print(e)
+
 
         if self.sock:
             self.sock.close()

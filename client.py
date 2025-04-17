@@ -442,13 +442,15 @@ class RemoteDesktopClient:
             try:
                 # 尝试发送一个空字节来检查连接
                 self.sock.sendall(b'')
-            except (socket.error, OSError):
+            except Exception as e:
                 self.sock_connected = False
                 # 关闭原套接字
                 self.disconnect()
                 # 重新创建套接字
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.connect()
+                print(e)
+                # raise
 
     def connect(self):
         try:
@@ -464,9 +466,9 @@ class RemoteDesktopClient:
             threading.Thread(target=self.receive_control, daemon=True).start()
         except Exception as e:
             self.sock_connected = False
-            messagebox.showerror('提示', '连接失败！')
+            self.connect_button['text'] = '连接超时!'
             print(e)
-            raise
+            # raise
 
     def disconnect(self):
         self.sock.close()
