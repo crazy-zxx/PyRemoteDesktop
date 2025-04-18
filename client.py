@@ -392,7 +392,7 @@ class RemoteDesktopClient:
         self.root = ui
 
         # socket 连接
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = None
         self.sock_connected = False
         self.check_interval = 10
         self.buffer_size = 65536
@@ -438,20 +438,20 @@ class RemoteDesktopClient:
         while True:
             time.sleep(self.check_interval)
             try:
-                # 尝试发送一个空字节来检查连接
-                self.sock.sendall(b'')
+                if self.sock:
+                    # 尝试发送一个空字节来检查连接
+                    self.sock.sendall(b'')
             except Exception as e:
-                self.sock_connected = False
                 # 关闭原套接字
                 self.disconnect()
-                # 重新创建套接字
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                # 连接
                 self.connect()
                 print(e)
                 # raise
 
     def connect(self):
         try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             ip = self.server_ip.get()
             port = int(self.server_port.get())
             self.sock.connect((ip, port))
@@ -465,11 +465,15 @@ class RemoteDesktopClient:
         except Exception as e:
             self.sock_connected = False
             self.connect_button['text'] = '连接超时!'
+            self.connect_button.config(state=tkinter.NORMAL)
             print(e)
             # raise
 
     def disconnect(self):
-        self.sock.close()
+        if self.sock:
+            self.sock.close()
+            self.sock = None
+        self.sock_connected = False
 
     def send_screen(self):
         while True:
@@ -496,7 +500,7 @@ class RemoteDesktopClient:
         keycodeMapping = {}
 
         def Op(key, op, ox, oy):
-            print(key, op, ox, oy)
+            # print(key, op, ox, oy)
             if key == 4:
                 # 鼠标移动
                 mouse.move(ox, oy)
@@ -537,8 +541,7 @@ class RemoteDesktopClient:
                 plat += self.sock.recv(3 - len(plat))
                 if len(plat) == 3:
                     break
-            print(plat, plat.decode('utf-8'))
-            print("Plat:", plat.decode())
+            # print("Plat:", plat.decode())
             keycodeMapping = getKeycodeMapping(plat)
             base_len = 6
             while True:
