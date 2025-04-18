@@ -174,6 +174,10 @@ class RemoteDesktopServer:
         self.connections[addr]['toggle_button'].config(state=tkinter.DISABLED)
 
         monitor_window = tkinter.Toplevel(self.root)
+        # 禁用窗口置顶
+        monitor_window.attributes("-topmost", False)
+        # 禁用窗口尺寸手动调整
+        monitor_window.resizable(False, False)
         monitor_window.title(f"监控 {addr[0]}:{addr[1]}")
         # 这里需要实现画面渲染和控制的逻辑
         canvas = tkinter.Canvas(monitor_window, width=1024, height=768, background="black")
@@ -278,7 +282,7 @@ class RemoteDesktopServer:
                 monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
                 monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
 
-                monitor_window.canvas.focus_set()
+                # monitor_window.canvas.focus_set()
 
             except Exception as e:
                 print(e)
