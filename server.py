@@ -1,4 +1,3 @@
-import io
 import platform
 import socket
 import struct

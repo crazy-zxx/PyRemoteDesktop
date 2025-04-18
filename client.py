@@ -3,7 +3,6 @@ import struct
 import threading
 import time
 import tkinter
-from tkinter import messagebox
 import cv2
 import mouse
 import mss
