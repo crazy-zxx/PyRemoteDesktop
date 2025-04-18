@@ -185,7 +185,7 @@ class RemoteDesktopServer:
         self.connections[addr]['monitor_window'] = monitor_window
         threading.Thread(target=self.receive_screen, args=(addr,), daemon=True).start()
         if self.connections[addr]['ctl_status']:
-            self.send_control(addr)
+            self.bind_control(addr)
 
     def monitor_window_close(self, addr):
         # 关闭monitor_window窗口
@@ -285,18 +285,7 @@ class RemoteDesktopServer:
                 print(e)
                 # raise
 
-    def send_control(self, addr):
-        # # 平台
-        # PLAT = b''
-        # if sys.platform == "win32":
-        #     PLAT = b'win'
-        # elif sys.platform == "darwin":
-        #     PLAT = b'osx'
-        # elif platform.system() == "Linux":
-        #     PLAT = b'x11'
-        # # 发送平台信息
-        # self.connections[addr]['conn'].sendall(PLAT)
-
+    def bind_control(self, addr):
         canvas = self.connections[addr]['monitor_window'].canvas
 
         def EventDo(data):
