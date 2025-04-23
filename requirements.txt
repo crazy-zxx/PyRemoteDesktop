@@ -1,0 +1,9 @@
+auto-py-to-exe==2.46.0
+keyboard==0.13.5
+mouse==0.7.1
+mss==9.0.2
+numpy==1.22.1
+opencv-python==4.5.5.62
+Pillow==9.0.0
+PyAutoGUI==0.9.54
+pyinstaller==6.13.0
