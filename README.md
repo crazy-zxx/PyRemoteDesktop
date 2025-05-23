@@ -165,3 +165,8 @@ systemctl status frps
 # 参考
 
 控制流数据实现参考了 [L.Chen 的 remote-desktop](https://github.com/pysrc/remote-desktop) 代码。
+
+
+# 注意
+
+控制功能并不完善，仅鼠标点击正常，键盘控制输入目前仍待改进。
