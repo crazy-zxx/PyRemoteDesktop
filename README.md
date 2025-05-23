@@ -152,10 +152,12 @@ systemctl status frps
 
 ![image](https://github.com/user-attachments/assets/18b2057c-93a1-4805-9150-39549517baa5)
 
+![image](https://github.com/user-attachments/assets/47687fba-5970-4180-9a09-8ff91f9b4aa6)
+
 
 ## 使用
 
-此时，被控端需要填写服务器的IP地址和监听端口。
+此时，`被控端`需要填写`服务器`的`IP地址`和监听`端口`。
 
 
 # 参考
