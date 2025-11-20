@@ -12,7 +12,7 @@ import pyautogui
 # for windows
 keycodeMappingWin = {
     0x08: 'backspace',  # VK_BACK
-    0x5B: 'super',  # VK_LWIN
+    # 0x5B: 'super',  # VK_LWIN ， 按win按键会出问题，直接屏蔽
     0x09: 'tab',  # VK_TAB
     0x0c: 'clear',  # VK_CLEAR
     0x0d: 'enter',  # VK_RETURN
@@ -83,8 +83,8 @@ keycodeMappingWin = {
     0x58: 'x',
     0x59: 'y',
     0x5a: 'z',
-    0x5b: 'win',  # VK_LWIN
-    0x5c: 'winright',  # VK_RWIN
+    # 0x5b: 'win',  # VK_LWIN ， 按win按键会出问题，直接屏蔽
+    # 0x5c: 'winright',  # VK_RWIN ， 按win按键会出问题，直接屏蔽
     0x5d: 'apps',  # VK_APPS
     0x5f: 'sleep',  # VK_SLEEP
     0x60: 'num0',  # VK_NUMPAD0
@@ -446,7 +446,6 @@ class RemoteDesktopClient:
                 # 连接
                 self.connect()
                 print(e)
-                # raise
 
     def connect(self):
         try:
@@ -466,7 +465,6 @@ class RemoteDesktopClient:
             self.connect_button['text'] = '连接超时!'
             self.connect_button.config(state=tkinter.NORMAL)
             print(e)
-            # raise
 
     def disconnect(self):
         if self.sock:
@@ -494,7 +492,7 @@ class RemoteDesktopClient:
 
     def receive_control(self):
         # 鼠标滚轮灵敏度
-        SCROLL_NUM = 5
+        SCROLL_NUM = 20
         # 按键映射
         keycodeMapping = {}
 
@@ -556,7 +554,7 @@ class RemoteDesktopClient:
                 Op(key, op, x, y)
         except Exception as e:
             print(e)
-            # raise
+
 
     def hide_window(self):
         self.root.withdraw()

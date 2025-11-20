@@ -282,14 +282,13 @@ class RemoteDesktopServer:
                 monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
                 monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
 
-                # monitor_window.canvas.focus_set()
-
             except Exception as e:
                 print(e)
-                # raise
 
     def bind_control(self, addr):
         canvas = self.connections[addr]['monitor_window'].canvas
+        # 设置Canvas获取焦点
+        canvas.focus_set()
 
         def EventDo(data):
             self.connections[addr]['conn'].sendall(data)
