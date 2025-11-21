@@ -411,7 +411,7 @@ class RemoteDesktopClient:
         self.root.title("远程桌面被控端")
 
         # 设置窗口大小，在屏幕居中显示
-        win_width, win_height = 300, 230
+        win_width, win_height = 350, 230
         win_x = (self.root.winfo_screenwidth() - win_width) // 2
         win_y = (self.root.winfo_screenheight() - win_height) // 2
         self.root.geometry(f'{win_width}x{win_height}+{win_x}+{win_y}')
