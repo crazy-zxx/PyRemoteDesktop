@@ -52,7 +52,7 @@ class RemoteDesktopServer:
         self.root.title("远程桌面控制端")
 
         # 设置窗口大小，在屏幕居中显示
-        win_width, win_height = 882, 500
+        win_width, win_height = 884, 500
         win_x = (self.root.winfo_screenwidth() - win_width) // 2
         win_y = (self.root.winfo_screenheight() - win_height) // 2
         self.root.geometry(f'{win_width}x{win_height}+{win_x}+{win_y}')
@@ -135,9 +135,33 @@ class RemoteDesktopServer:
                                                                                              sticky="nsew")
             header_frame.columnconfigure(col, weight=1)
 
-        # 用于显示连接信息的框架
-        self.connections_frame = tkinter.Frame(self.root, bd=1, relief="solid")
-        self.connections_frame.grid(row=4, column=0, columnspan=6, sticky="nsew", padx=5)
+        # 创建带滚动条的连接列表框架
+        self.canvas_frame = tkinter.Frame(self.root, bd=1, relief="solid")
+        self.canvas_frame.grid(row=4, column=0, columnspan=6, sticky="nsew", padx=5)
+
+        # 创建垂直滚动条
+        self.scrollbar = tkinter.Scrollbar(self.canvas_frame, orient="vertical")
+        self.scrollbar.pack(side="right", fill="y")
+
+        # 创建Canvas作为滚动区域
+        self.canvas = tkinter.Canvas(self.canvas_frame, yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        # 配置滚动条与Canvas的关联
+        self.scrollbar.config(command=self.canvas.yview)
+
+        # 创建一个内部框架，用于放置所有连接项
+        self.connections_frame = tkinter.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.connections_frame, anchor="nw")
+
+        # 绑定事件，当内部框架大小改变时更新Canvas的滚动区域
+        self.connections_frame.bind("<Configure>", self.on_frame_configure)
+
+        # 绑定鼠标滚轮事件
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        # 为Linux系统绑定滚轮事件
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel_linux)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel_linux)
 
         # 检查连接
         threading.Thread(target=self.check_connections, daemon=True).start()
@@ -154,7 +178,7 @@ class RemoteDesktopServer:
         msg_window.configure(bg="white")
 
         # 计算窗口大小和位置，使其在父窗口中心
-        msg_width = 300
+        msg_width = 250
         msg_height = 150
 
         # 获取父窗口位置
@@ -245,7 +269,7 @@ class RemoteDesktopServer:
         stop_button = tkinter.Button(connection_frame, text="删除连接", width=10,
                                      command=lambda: self.destroy_connection_exit(addr, ))
         stop_button.grid(row=0, column=4, sticky=tkinter.EW, padx=32)
-        scale_bar = tkinter.Scale(connection_frame, from_=0.5, to=2.0, resolution=0.1, length=213,
+        scale_bar = tkinter.Scale(connection_frame, from_=0.5, to=2.0, resolution=0.1, length=200,
                                   orient=tkinter.HORIZONTAL,
                                   command=lambda _: self.adjust_scale(scale_bar.get(), addr))
         scale_bar.set(1.0)
@@ -267,6 +291,21 @@ class RemoteDesktopServer:
 
         # 发送平台信息
         self.connections[addr]['conn'].sendall(PLAT)
+
+    def on_frame_configure(self, event):
+        """当内部框架大小改变时，更新Canvas的滚动区域"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_mousewheel(self, event):
+        """处理Windows和Mac系统的鼠标滚轮事件"""
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_mousewheel_linux(self, event):
+        """处理Linux系统的鼠标滚轮事件"""
+        if event.num == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.canvas.yview_scroll(1, "units")
 
     def check_connections(self):
         while True:
@@ -421,11 +460,15 @@ class RemoteDesktopServer:
 
     def destroy_connection(self, addr):
         if addr in self.connections:
-            if self.connections[addr]['monitor_window']:
-                self.connections[addr]['monitor_window'].destroy()
+            try:
+                if self.connections[addr]['monitor_window']:
+                    self.connections[addr]['monitor_window'].destroy()
                 self.connections[addr]['conn'].close()
                 self.connections[addr]['frame'].destroy()
                 del self.connections[addr]
+            except Exception as e:
+                # print(e)
+                pass
 
     def destroy_connection_exit(self, addr):
         if addr in self.connections:
@@ -442,7 +485,6 @@ class RemoteDesktopServer:
                 self.connections[addr]['frame'].destroy()
                 del self.connections[addr]
 
-
     def toggle_control(self, new_ctl_status, addr):
         if addr in self.connections:
             self.connections[addr]['ctl_status'] = new_ctl_status
@@ -454,14 +496,7 @@ class RemoteDesktopServer:
     def stop_listening(self):
         # 关闭所有打开的monitor_window窗口、结束已经打开的会话连接
         for addr in list(self.connections.keys()):
-            if self.connections[addr]['monitor_window']:
-                self.connections[addr]['monitor_window'].destroy()
-            self.connections[addr]['conn'].close()
-            try:
-                self.connections[addr]['frame'].destroy()
-                del self.connections[addr]
-            except Exception as e:
-                print(e)
+            self.destroy_connection(addr)
 
         if self.sock:
             self.sock.close()
@@ -470,85 +505,45 @@ class RemoteDesktopServer:
 
     def receive_screen(self, addr):
 
-        lenb = self.connections[addr]['conn'].recv(5)
-        imtype, le = struct.unpack(">BI", lenb)
-        imb = b''
-        while le > self.buffer_size:
-            t = self.connections[addr]['conn'].recv(self.buffer_size)
-            imb += t
-            le -= len(t)
-        while le > 0:
-            t = self.connections[addr]['conn'].recv(le)
-            imb += t
-            le -= len(t)
-
-        # 从frame_data解码图像，然后渲染到monitor_window的canvas中去
-        try:
-            # 解码图像
-            frame_data = np.frombuffer(imb, dtype=np.uint8)
-            img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
-
-            # 获取当前连接的缩放比例
-            scale = self.connections[addr]['scale']
-            # 根据缩放比例调整图像大小
-            height, width = img.shape[:2]
-            new_width = int(width * scale)
-            new_height = int(height * scale)
-            img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
-            photo = ImageTk.PhotoImage(Image.fromarray(img))
-
-            # 调整 Canvas 和窗口的大小
-            monitor_window = self.connections[addr]['monitor_window']
-            monitor_window.canvas.config(width=new_width, height=new_height)
-            monitor_window.geometry(f"{new_width}x{new_height}")
-
-            # 在 Canvas 上显示图像
-            monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
-            monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
-
-        except Exception as e:
-            # print(e)
-            pass
+        data = b""
+        payload_size = struct.calcsize("Q")
 
         while self.connections[addr]['monitor_window']:
-            lenb = self.connections[addr]['conn'].recv(5)
-            imtype, le = struct.unpack(">BI", lenb)
-            imb = b''
-            while le > self.buffer_size:
-                t = self.connections[addr]['conn'].recv(self.buffer_size)
-                imb += t
-                le -= len(t)
-            while le > 0:
-                t = self.connections[addr]['conn'].recv(le)
-                imb += t
-                le -= len(t)
+            while len(data) < payload_size:
+                packet = self.connections[addr]['conn'].recv(self.buffer_size)
+                if not packet:
+                    break
+                data += packet
 
-            # 从frame_data解码图像，然后渲染到monitor_window的canvas中去
+            if len(data) < payload_size:
+                continue
+
+            packed_msg_size = data[:payload_size]
+            data = data[payload_size:]
+            msg_size = struct.unpack("Q", packed_msg_size)[0]
+
+            while len(data) < msg_size:
+                data += self.connections[addr]['conn'].recv(self.buffer_size)
+
+            frame_data = data[:msg_size]
+            data = data[msg_size:]
+
+            # 从frame_data解码JPEG图像，然后渲染到monitor_window的canvas中去
             try:
-                # 解码图像
-                frame_data = np.frombuffer(imb, dtype=np.uint8)
-                ims = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
-
-                # # 获取当前连接的缩放比例
+                # 解码 JPEG 图像
+                frame_data = np.frombuffer(frame_data, dtype=np.uint8)
+                img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                # 获取当前连接的缩放比例
                 scale = self.connections[addr]['scale']
+
                 # 根据缩放比例调整图像大小
-                height, width = ims.shape[:2]
+                height, width = img.shape[:2]
                 new_width = int(width * scale)
                 new_height = int(height * scale)
-
-                # 调整新图像大小到上一张大小，计算差异进行恢复
-                ims = cv2.resize(ims, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR_EXACT)
-
-                if imtype == 1:
-                    # 全传
-                    img = ims
-                else:
-                    # 差异传
-                    img = img ^ ims
-
-                # 根据缩放比例调整图像大小
                 img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
-                photo = ImageTk.PhotoImage(Image.fromarray(img))
+                img = Image.fromarray(img)
+                photo = ImageTk.PhotoImage(img)
 
                 # 调整 Canvas 和窗口的大小
                 monitor_window = self.connections[addr]['monitor_window']
@@ -558,17 +553,17 @@ class RemoteDesktopServer:
                 # 在 Canvas 上显示图像
                 monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
                 monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
-                monitor_window.canvas.update()
 
             except Exception as e:
-                print(e)
-                print('???')
+                # print(e)
                 pass
 
     def bind_control(self, addr):
+
         canvas = self.connections[addr]['monitor_window'].canvas
         # 设置Canvas获取焦点
         canvas.focus_set()
+
 
         def EventDo(data):
             self.connections[addr]['conn'].sendall(data)
