@@ -41,7 +41,7 @@ class RemoteDesktopServer:
         # 存储连接信息和相关组件，改为字典
         self.connections = {}
         self.check_interval = 1
-        self.buffer_size = 10240
+        self.buffer_size = 40960
 
         # frp 相关
         self.frp_process = None
@@ -398,6 +398,7 @@ class RemoteDesktopServer:
         monitor_window.attributes("-topmost", False)
         # 禁用窗口尺寸手动调整
         monitor_window.resizable(False, False)
+        monitor_window.maxsize(8000, 5000)
         monitor_window.title(f"监控 {addr[0]}:{addr[1]}")
         # 这里需要实现画面渲染和控制的逻辑
         canvas = tkinter.Canvas(monitor_window, width=1024, height=768, background="black")
@@ -481,9 +482,9 @@ class RemoteDesktopServer:
             imb += t
             le -= len(t)
 
-        # 从frame_data解码JPEG图像，然后渲染到monitor_window的canvas中去
+        # 从frame_data解码图像，然后渲染到monitor_window的canvas中去
         try:
-            # 解码 JPEG 图像
+            # 解码图像
             frame_data = np.frombuffer(imb, dtype=np.uint8)
             img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
 
@@ -493,10 +494,8 @@ class RemoteDesktopServer:
             height, width = img.shape[:2]
             new_width = int(width * scale)
             new_height = int(height * scale)
-            img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2RGBA)
-            img = Image.fromarray(img)
-            photo = ImageTk.PhotoImage(img)
+            img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
+            photo = ImageTk.PhotoImage(Image.fromarray(img))
 
             # 调整 Canvas 和窗口的大小
             monitor_window = self.connections[addr]['monitor_window']
@@ -524,11 +523,21 @@ class RemoteDesktopServer:
                 imb += t
                 le -= len(t)
 
-            # 从frame_data解码JPEG图像，然后渲染到monitor_window的canvas中去
+            # 从frame_data解码图像，然后渲染到monitor_window的canvas中去
             try:
-                # 解码 JPEG 图像
+                # 解码图像
                 frame_data = np.frombuffer(imb, dtype=np.uint8)
                 ims = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
+
+                # # 获取当前连接的缩放比例
+                scale = self.connections[addr]['scale']
+                # 根据缩放比例调整图像大小
+                height, width = ims.shape[:2]
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+
+                # 调整新图像大小到上一张大小，计算差异进行恢复
+                ims = cv2.resize(ims, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR_EXACT)
 
                 if imtype == 1:
                     # 全传
@@ -537,17 +546,9 @@ class RemoteDesktopServer:
                     # 差异传
                     img = img ^ ims
 
-                # 获取当前连接的缩放比例
-                scale = self.connections[addr]['scale']
                 # 根据缩放比例调整图像大小
-                height, width = img.shape[:2]
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                print(new_width, new_height)
-                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2RGBA)
-                img = Image.fromarray(img)
-                photo = ImageTk.PhotoImage(img)
+                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
+                photo = ImageTk.PhotoImage(Image.fromarray(img))
 
                 # 调整 Canvas 和窗口的大小
                 monitor_window = self.connections[addr]['monitor_window']
@@ -557,9 +558,11 @@ class RemoteDesktopServer:
                 # 在 Canvas 上显示图像
                 monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
                 monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
+                monitor_window.canvas.update()
 
             except Exception as e:
-                # print(e)
+                print(e)
+                print('???')
                 pass
 
     def bind_control(self, addr):

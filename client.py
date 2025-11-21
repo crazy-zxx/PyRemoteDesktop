@@ -403,7 +403,7 @@ class RemoteDesktopClient:
         # 编码后的图像
         self.imbyt = None
         # 压缩比 1-100 数值越小，压缩比越高，图片质量损失越严重
-        self.IMQUALITY = 50
+        self.IMQUALITY = 100
         # 画面周期
         self.IDLE = 0.01
 
