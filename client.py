@@ -8,6 +8,7 @@ import mouse
 import mss
 import numpy as np
 import pyautogui
+from PIL import ImageGrab
 
 # for windows
 keycodeMappingWin = {
@@ -394,8 +395,17 @@ class RemoteDesktopClient:
         self.sock = None
         self.sock_connected = False
         self.check_interval = 10
-        self.buffer_size = 65536
-        self.fps = 10
+
+        # 线程锁
+        self.lock = threading.Lock()
+        # 压缩后np图像
+        self.img = None
+        # 编码后的图像
+        self.imbyt = None
+        # 压缩比 1-100 数值越小，压缩比越高，图片质量损失越严重
+        self.IMQUALITY = 50
+        # 画面周期
+        self.IDLE = 0.01
 
         # 设置窗口标题
         self.root.title("远程桌面被控端")
@@ -473,22 +483,54 @@ class RemoteDesktopClient:
         self.sock_connected = False
 
     def send_screen(self):
+
+        self.lock.acquire()
+
+        if self.imbyt is None:
+            imorg = np.asarray(ImageGrab.grab())
+            _, self.imbyt = cv2.imencode(
+                ".jpg", imorg, [cv2.IMWRITE_JPEG_QUALITY, self.IMQUALITY])
+            imnp = np.asarray(self.imbyt, np.uint8)
+            self.img = cv2.imdecode(imnp, cv2.IMREAD_COLOR)
+
+        self.lock.release()
+
+        lenb = struct.pack(">BI", 1, len(self.imbyt))
+        self.sock.sendall(lenb)
+        self.sock.sendall(self.imbyt)
         while True:
-            with mss.mss() as sct:
-                # 显示器尺寸信息列表：索引 0 是所有显示器组合的尺寸，索引 1 是主显示器尺寸，以此类推
-                monitors = sct.monitors[:]
-                screenshot = sct.grab(monitors[1])
-                # 压缩图像，通过jpg格式
-                # 将mss的ScreenShot对象转换为numpy数组
-                img = np.array(screenshot)
-                # 压缩图像
-                _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 50])
-                # 将压缩后的图像数据转换回numpy数组
-                compressed_img = np.asarray(buffer, np.uint8)
-                # 序列化图像数据
-                message = struct.pack("Q", len(compressed_img)) + compressed_img.astype(np.uint8).tobytes()
-                self.sock.sendall(message)
-            time.sleep(1 / self.fps)
+            # fix for linux
+            time.sleep(self.IDLE)
+            gb = ImageGrab.grab()
+            imgnpn = np.asarray(gb)
+            _, timbyt = cv2.imencode(
+                ".jpg", imgnpn, [cv2.IMWRITE_JPEG_QUALITY, self.IMQUALITY])
+            imnp = np.asarray(timbyt, np.uint8)
+            imgnew = cv2.imdecode(imnp, cv2.IMREAD_COLOR)
+            # 计算图像差值
+            imgs = imgnew ^ self.img
+            if (imgs != 0).any():
+                # 画质改变
+                pass
+            else:
+                continue
+            self.imbyt = timbyt
+            self.img = imgnew
+            # 无损压缩
+            _, imb = cv2.imencode(".png", imgs)
+            l1 = len(self.imbyt)  # 原图像大小
+            l2 = len(imb)  # 差异图像大小
+            if l1 > l2:
+                # 传差异化图像
+                lenb = struct.pack(">BI", 0, l2)
+                self.sock.sendall(lenb)
+                self.sock.sendall(imb)
+            else:
+                # 传原编码图像
+                lenb = struct.pack(">BI", 1, l1)
+                self.sock.sendall(lenb)
+                self.sock.sendall(self.imbyt)
+
 
     def receive_control(self):
         # 鼠标滚轮灵敏度
@@ -498,7 +540,12 @@ class RemoteDesktopClient:
 
         def Op(key, op, ox, oy):
             # print(key, op, ox, oy)
-            if key == 4:
+            # 退出程序指令：(0, 0, ...)
+            if key == 0:
+                if op == 0:
+                    self.on_close()
+            # 鼠标移动指令：(4, ...)
+            elif key == 4:
                 # 鼠标移动
                 mouse.move(ox, oy)
             elif key == 1:

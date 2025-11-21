@@ -40,9 +40,8 @@ class RemoteDesktopServer:
         self.sock = None
         # 存储连接信息和相关组件，改为字典
         self.connections = {}
-        self.max_connections = 5
         self.check_interval = 1
-        self.buffer_size = 65536
+        self.buffer_size = 10240
 
         # frp 相关
         self.frp_process = None
@@ -210,20 +209,20 @@ class RemoteDesktopServer:
             ip = self.local_ip.get()
             port = int(self.local_port.get())
             self.sock.bind((ip, port))
-            self.sock.listen(self.max_connections)
+            # 操作系统允许的最大未处理连接请求数（连接队列的长度上限）。
+            self.sock.listen(10)
             self.start_listening_button.config(state=tkinter.DISABLED)
             self.stop_listening_button.config(state=tkinter.NORMAL)
             # 新线程中持续监听连接
             threading.Thread(target=self.accept_connections, daemon=True).start()
         except Exception as e:
             self.messagebox_showerror('提示', '启动监听失败！')
-            print(e)
-            # raise
+            # print(e)
 
     def accept_connections(self):
         while True:
             conn, addr = self.sock.accept()
-            print('Accept new connection from %s:%s ...' % addr)
+            # print('Accept new connection from %s:%s ...' % addr)
             # 添加连接记录到列表中显示
             self.add_connection(conn, addr)
 
@@ -244,7 +243,7 @@ class RemoteDesktopServer:
                                             indicatoron=True, width=8)
         toggle_button.grid(row=0, column=3, sticky=tkinter.EW, padx=32)
         stop_button = tkinter.Button(connection_frame, text="删除连接", width=10,
-                                     command=lambda: self.destroy_connection(addr, ))
+                                     command=lambda: self.destroy_connection_exit(addr, ))
         stop_button.grid(row=0, column=4, sticky=tkinter.EW, padx=32)
         scale_bar = tkinter.Scale(connection_frame, from_=0.5, to=2.0, resolution=0.1, length=213,
                                   orient=tkinter.HORIZONTAL,
@@ -278,8 +277,7 @@ class RemoteDesktopServer:
                     conn.sendall(b'')
                 except Exception as e:
                     self.destroy_connection(addr)
-                    print(e)
-                    # raise
+                    # print(e)
 
     def toggle_frp(self):
         """切换frp客户端的启动和关闭状态"""
@@ -424,9 +422,25 @@ class RemoteDesktopServer:
         if addr in self.connections:
             if self.connections[addr]['monitor_window']:
                 self.connections[addr]['monitor_window'].destroy()
-            self.connections[addr]['conn'].close()
-            self.connections[addr]['frame'].destroy()
-            del self.connections[addr]
+                self.connections[addr]['conn'].close()
+                self.connections[addr]['frame'].destroy()
+                del self.connections[addr]
+
+    def destroy_connection_exit(self, addr):
+        if addr in self.connections:
+            if self.connections[addr]['monitor_window']:
+                self.connections[addr]['monitor_window'].destroy()
+            try:
+                # 发送关闭被控端程序的指令：(0, 0, ...)
+                self.connections[addr]['conn'].sendall(struct.pack('>BBHH', 0, 0, 0, 0))
+            except Exception as e:
+                # print(e)
+                pass
+            finally:
+                self.connections[addr]['conn'].close()
+                self.connections[addr]['frame'].destroy()
+                del self.connections[addr]
+
 
     def toggle_control(self, new_ctl_status, addr):
         if addr in self.connections:
@@ -447,7 +461,6 @@ class RemoteDesktopServer:
                 del self.connections[addr]
             except Exception as e:
                 print(e)
-                # raise
 
         if self.sock:
             self.sock.close()
@@ -455,43 +468,84 @@ class RemoteDesktopServer:
         self.stop_listening_button.config(state=tkinter.DISABLED)
 
     def receive_screen(self, addr):
-        data = b""
-        payload_size = struct.calcsize("Q")
+
+        lenb = self.connections[addr]['conn'].recv(5)
+        imtype, le = struct.unpack(">BI", lenb)
+        imb = b''
+        while le > self.buffer_size:
+            t = self.connections[addr]['conn'].recv(self.buffer_size)
+            imb += t
+            le -= len(t)
+        while le > 0:
+            t = self.connections[addr]['conn'].recv(le)
+            imb += t
+            le -= len(t)
+
+        # 从frame_data解码JPEG图像，然后渲染到monitor_window的canvas中去
+        try:
+            # 解码 JPEG 图像
+            frame_data = np.frombuffer(imb, dtype=np.uint8)
+            img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
+
+            # 获取当前连接的缩放比例
+            scale = self.connections[addr]['scale']
+            # 根据缩放比例调整图像大小
+            height, width = img.shape[:2]
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2RGBA)
+            img = Image.fromarray(img)
+            photo = ImageTk.PhotoImage(img)
+
+            # 调整 Canvas 和窗口的大小
+            monitor_window = self.connections[addr]['monitor_window']
+            monitor_window.canvas.config(width=new_width, height=new_height)
+            monitor_window.geometry(f"{new_width}x{new_height}")
+
+            # 在 Canvas 上显示图像
+            monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
+            monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
+
+        except Exception as e:
+            # print(e)
+            pass
 
         while self.connections[addr]['monitor_window']:
-            while len(data) < payload_size:
-                packet = self.connections[addr]['conn'].recv(self.buffer_size)
-                if not packet:
-                    break
-                data += packet
-
-            if len(data) < payload_size:
-                continue
-
-            packed_msg_size = data[:payload_size]
-            data = data[payload_size:]
-            msg_size = struct.unpack("Q", packed_msg_size)[0]
-
-            while len(data) < msg_size:
-                data += self.connections[addr]['conn'].recv(self.buffer_size)
-
-            frame_data = data[:msg_size]
-            data = data[msg_size:]
+            lenb = self.connections[addr]['conn'].recv(5)
+            imtype, le = struct.unpack(">BI", lenb)
+            imb = b''
+            while le > self.buffer_size:
+                t = self.connections[addr]['conn'].recv(self.buffer_size)
+                imb += t
+                le -= len(t)
+            while le > 0:
+                t = self.connections[addr]['conn'].recv(le)
+                imb += t
+                le -= len(t)
 
             # 从frame_data解码JPEG图像，然后渲染到monitor_window的canvas中去
             try:
                 # 解码 JPEG 图像
-                frame_data = np.frombuffer(frame_data, dtype=np.uint8)
-                img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                frame_data = np.frombuffer(imb, dtype=np.uint8)
+                ims = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
+
+                if imtype == 1:
+                    # 全传
+                    img = ims
+                else:
+                    # 差异传
+                    img = img ^ ims
+
                 # 获取当前连接的缩放比例
                 scale = self.connections[addr]['scale']
-
                 # 根据缩放比例调整图像大小
                 height, width = img.shape[:2]
                 new_width = int(width * scale)
                 new_height = int(height * scale)
+                print(new_width, new_height)
                 img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2RGBA)
                 img = Image.fromarray(img)
                 photo = ImageTk.PhotoImage(img)
 
@@ -505,7 +559,8 @@ class RemoteDesktopServer:
                 monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
 
             except Exception as e:
-                print(e)
+                # print(e)
+                pass
 
     def bind_control(self, addr):
         canvas = self.connections[addr]['monitor_window'].canvas
