@@ -6,6 +6,9 @@ import threading
 import time
 import tkinter
 from tkinter import messagebox
+import subprocess
+import os
+import configparser
 
 import cv2
 import numpy as np
@@ -30,6 +33,9 @@ class RemoteDesktopServer:
         # UI
         self.root = ui
 
+        # 自定义消息框函数，使其置顶于父窗口并居中显示
+        self.messagebox = self._create_messagebox
+
         # socket 连接
         self.sock = None
         # 存储连接信息和相关组件，改为字典
@@ -37,6 +43,11 @@ class RemoteDesktopServer:
         self.max_connections = 5
         self.check_interval = 1
         self.buffer_size = 65536
+
+        # frp 相关
+        self.frp_process = None
+        self.frp_config_path = os.path.join(os.getcwd(), 'frpc.ini')
+        self.frp_client_path = os.path.join(os.getcwd(), 'frpc.exe')  # Windows 默认路径，根据系统可调整
 
         # 设置窗口标题
         self.root.title("远程桌面控制端")
@@ -53,6 +64,7 @@ class RemoteDesktopServer:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # 窗口组件
+        # 监听配置区域
         tkinter.Label(self.root, text="监听地址：").grid(row=0, column=0, sticky=tkinter.EW, padx=10, pady=10)
         self.local_ip = tkinter.Entry(self.root, textvariable=tkinter.StringVar(value='0.0.0.0'), width=10)
         self.local_ip.grid(row=0, column=1, sticky=tkinter.EW, padx=10, pady=10)
@@ -65,13 +77,53 @@ class RemoteDesktopServer:
                                                     command=self.stop_listening)
         self.stop_listening_button.grid(row=0, column=5, sticky=tkinter.EW, padx=10, pady=10)
 
+        # frp 配置区域
+        frp_frame = tkinter.Frame(self.root, bd=2, relief="solid")
+        frp_frame.grid(row=1, column=0, columnspan=6, sticky="nsew", padx=5, pady=5)
+        tkinter.Label(frp_frame, text="FRP 配置", font=('Arial', 10, 'bold')).grid(row=0, column=0, columnspan=6,
+                                                                                   sticky="w", padx=5)
+
+        # FRP 服务端配置
+        tkinter.Label(frp_frame, text="FRP 服务器地址：").grid(row=1, column=0, sticky=tkinter.E, padx=5, pady=5)
+        self.frp_server_ip = tkinter.Entry(frp_frame, textvariable=tkinter.StringVar(value=''), width=15)
+        self.frp_server_ip.grid(row=1, column=1, sticky=tkinter.W, padx=5, pady=5)
+
+        tkinter.Label(frp_frame, text="FRP 服务器端口：").grid(row=1, column=2, sticky=tkinter.E, padx=5, pady=5)
+        self.frp_server_port = tkinter.Entry(frp_frame, textvariable=tkinter.StringVar(value='7000'), width=10)
+        self.frp_server_port.grid(row=1, column=3, sticky=tkinter.W, padx=5, pady=5)
+
+        tkinter.Label(frp_frame, text="FRP 连接Token：").grid(row=1, column=4, sticky=tkinter.E, padx=5, pady=5)
+        self.frp_token = tkinter.Entry(frp_frame, textvariable=tkinter.StringVar(value=''), width=15, show='*')
+        self.frp_token.grid(row=1, column=5, sticky=tkinter.W, padx=5, pady=5)
+
+        # FRP 客户端配置
+        tkinter.Label(frp_frame, text="本地监听端口：").grid(row=2, column=0, sticky=tkinter.E, padx=5, pady=5)
+        self.frp_local_port = tkinter.Entry(frp_frame, textvariable=tkinter.StringVar(value='54321'), width=10)
+        self.frp_local_port.grid(row=2, column=1, sticky=tkinter.W, padx=5, pady=5)
+
+        tkinter.Label(frp_frame, text="远程访问端口：").grid(row=2, column=2, sticky=tkinter.E, padx=5, pady=5)
+        self.frp_remote_port = tkinter.Entry(frp_frame, textvariable=tkinter.StringVar(value='54321'), width=10)
+        self.frp_remote_port.grid(row=2, column=3, sticky=tkinter.W, padx=5, pady=5)
+
+        self.frp_enabled = tkinter.BooleanVar(value=False)
+        self.frp_toggle = tkinter.Checkbutton(frp_frame, text="启用FRP连接", variable=self.frp_enabled,
+                                              command=self.toggle_frp, indicatoron=True, width=12)
+        self.frp_toggle.grid(row=2, column=4, sticky=tkinter.W, padx=5, pady=5)
+
+        self.frp_status_label = tkinter.Label(frp_frame, text="FRP状态: 未连接", fg="red")
+        self.frp_status_label.grid(row=2, column=5, sticky=tkinter.W, padx=5, pady=5)
+
+        # 设置frp_frame列宽权重
+        for i in range(6):
+            frp_frame.columnconfigure(i, weight=1)
+
         # 显示连接列表
-        tkinter.Label(self.root, text="连接会话列表", bd=2, relief="solid", width=123).grid(row=1, column=0,
+        tkinter.Label(self.root, text="连接会话列表", bd=2, relief="solid", width=123).grid(row=2, column=0,
                                                                                             columnspan=6,
                                                                                             ipady=5)
         # 表格头部
         header_frame = tkinter.Frame(self.root, bd=1, relief="solid")
-        header_frame.grid(row=2, column=0, columnspan=6, sticky="nsew", padx=5)
+        header_frame.grid(row=3, column=0, columnspan=6, sticky="nsew", padx=5)
         headers = ["被控端地址", "端口", "启动监控", "开启控制", "删除连接", "缩放比例"]
         for col, header in enumerate(headers):
             if header == "端口":
@@ -86,10 +138,71 @@ class RemoteDesktopServer:
 
         # 用于显示连接信息的框架
         self.connections_frame = tkinter.Frame(self.root, bd=1, relief="solid")
-        self.connections_frame.grid(row=3, column=0, columnspan=6, sticky="nsew", padx=5)
+        self.connections_frame.grid(row=4, column=0, columnspan=6, sticky="nsew", padx=5)
 
         # 检查连接
         threading.Thread(target=self.check_connections, daemon=True).start()
+
+    def _create_messagebox(self, msg_type, title, message):
+        """创建一个置顶于父窗口并居中显示的消息框"""
+        # 创建自定义Toplevel窗口作为消息框
+        msg_window = tkinter.Toplevel(self.root)
+        msg_window.title(title)
+        msg_window.transient(self.root)  # 设置为主窗口的子窗口
+        msg_window.grab_set()  # 模态窗口，阻止主窗口操作
+
+        # 设置窗口属性
+        msg_window.configure(bg="white")
+
+        # 计算窗口大小和位置，使其在父窗口中心
+        msg_width = 300
+        msg_height = 150
+
+        # 获取父窗口位置
+        parent_x = self.root.winfo_x()
+        parent_y = self.root.winfo_y()
+        parent_width = self.root.winfo_width()
+        parent_height = self.root.winfo_height()
+
+        # 计算消息框位置，使其居中于父窗口
+        msg_x = parent_x + (parent_width - msg_width) // 2
+        msg_y = parent_y + (parent_height - msg_height) // 2
+
+        # 设置窗口位置和大小
+        msg_window.geometry(f"{msg_width}x{msg_height}+{msg_x}+{msg_y}")
+        msg_window.resizable(False, False)
+
+        # 添加消息标签
+        msg_label = tkinter.Label(msg_window, text=message, font=("SimHei", 10), wraplength=msg_width - 40,
+                                  justify="center", bg="white")
+        msg_label.pack(pady=30)
+
+        # 添加确定按钮
+        ok_button = tkinter.Button(msg_window, text="确定", width=10, command=msg_window.destroy)
+        ok_button.pack(pady=10)
+
+        # 设置按钮为默认焦点
+        ok_button.focus_set()
+
+        # 绑定Enter键关闭窗口
+        msg_window.bind("<Return>", lambda event: msg_window.destroy())
+
+        # 等待用户关闭消息框
+        self.root.wait_window(msg_window)
+
+        return None  # 自定义消息框没有返回值
+
+    def messagebox_showerror(self, title, message):
+        """错误消息框"""
+        return self._create_messagebox(messagebox.showerror, title, message)
+
+    def messagebox_showinfo(self, title, message):
+        """信息消息框"""
+        return self._create_messagebox(messagebox.showinfo, title, message)
+
+    def messagebox_showwarning(self, title, message):
+        """警告消息框"""
+        return self._create_messagebox(messagebox.showwarning, title, message)
 
     def start_listening(self):
         try:
@@ -103,7 +216,7 @@ class RemoteDesktopServer:
             # 新线程中持续监听连接
             threading.Thread(target=self.accept_connections, daemon=True).start()
         except Exception as e:
-            messagebox.showerror('提示', '启动监听失败！')
+            self.messagebox_showerror('提示', '启动监听失败！')
             print(e)
             # raise
 
@@ -164,9 +277,118 @@ class RemoteDesktopServer:
                 try:
                     conn.sendall(b'')
                 except Exception as e:
-                    self.destroy_connection(conn, addr)
+                    self.destroy_connection(addr)
                     print(e)
                     # raise
+
+    def toggle_frp(self):
+        """切换frp客户端的启动和关闭状态"""
+        if self.frp_enabled.get():
+            self.start_frp()
+        else:
+            self.stop_frp()
+
+    def start_frp(self):
+        """启动frp客户端"""
+        try:
+            # 检查frp客户端可执行文件是否存在
+            if not os.path.exists(self.frp_client_path):
+                self.messagebox_showerror('错误',
+                                          f'未找到frp客户端程序: {self.frp_client_path}\n请确保frpc.exe已放置在程序目录中')
+                self.frp_enabled.set(False)
+                return
+
+            # 获取配置信息
+            server_ip = self.frp_server_ip.get()
+            server_port = self.frp_server_port.get()
+            token = self.frp_token.get()
+            local_port = self.frp_local_port.get()
+            remote_port = self.frp_remote_port.get()
+
+            # 验证必要配置
+            if not server_ip or not server_port or not token:
+                self.messagebox_showerror('错误', '请填写完整的FRP服务器配置')
+                self.frp_enabled.set(False)
+                return
+
+            # 创建frp配置文件
+            self.create_frp_config(server_ip, server_port, token, local_port, remote_port)
+
+            # 启动frp客户端
+            self.frp_process = subprocess.Popen(
+                [self.frp_client_path, '-c', self.frp_config_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            # 更新状态
+            self.frp_status_label.config(text="FRP状态: 已连接", fg="green")
+            # self.messagebox_showinfo('成功', 'FRP客户端已启动')
+
+            # 启动监控线程检查frp进程状态
+            threading.Thread(target=self.monitor_frp, daemon=True).start()
+
+        except Exception as e:
+            self.messagebox_showerror('错误', f'启动FRP客户端失败: {str(e)}')
+            self.frp_enabled.set(False)
+            self.frp_status_label.config(text="FRP状态: 未连接", fg="red")
+
+    def stop_frp(self):
+        """停止frp客户端"""
+        try:
+            if self.frp_process:
+                # 终止进程
+                if platform.system() == "Windows":
+                    # Windows下使用taskkill确保完全终止进程树
+                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(self.frp_process.pid)])
+                else:
+                    # Unix-like系统
+                    self.frp_process.terminate()
+                    self.frp_process.wait(timeout=5)
+
+                self.frp_process = None
+                self.frp_status_label.config(text="FRP状态: 未连接", fg="red")
+                # self.messagebox_showinfo('成功', 'FRP客户端已停止')
+        except Exception as e:
+            self.messagebox_showerror('错误', f'停止FRP客户端失败: {str(e)}')
+            self.frp_status_label.config(text="FRP状态: 错误", fg="orange")
+
+    def create_frp_config(self, server_ip, server_port, token, local_port, remote_port):
+        """创建frp客户端配置文件"""
+        config = configparser.ConfigParser()
+
+        # 通用配置
+        config['common'] = {
+            'server_addr': server_ip,
+            'server_port': server_port,
+            'token': token
+        }
+
+        # 远程桌面服务的隧道配置
+        config['remote_desktop'] = {
+            'type': 'tcp',
+            'local_ip': '127.0.0.1',
+            'local_port': local_port,
+            'remote_port': remote_port
+        }
+
+        # 写入配置文件
+        with open(self.frp_config_path, 'w', encoding='utf-8') as f:
+            config.write(f)
+
+    def monitor_frp(self):
+        """监控frp客户端进程状态"""
+        if self.frp_process:
+            # 等待进程结束
+            self.frp_process.wait()
+
+            # 如果进程意外终止，更新UI状态
+            if self.frp_enabled.get():
+                # 在主线程中更新UI
+                self.root.after(0, lambda: self.frp_status_label.config(text="FRP状态: 意外终止", fg="red"))
+                self.root.after(0, lambda: self.frp_enabled.set(False))
+                self.root.after(0, lambda: self.messagebox_showerror('错误', 'FRP客户端意外终止'))
 
     def start_monitoring(self, addr):
         # 启动后禁用start_button按钮
@@ -381,7 +603,11 @@ class RemoteDesktopServer:
         canvas.bind(sequence="<KeyRelease>", func=KeyUp)
 
     def on_close(self):
+        # 停止frp客户端
+        self.stop_frp()
+        # 停止监听服务
         self.stop_listening()
+        # 销毁窗口
         self.root.destroy()
 
 

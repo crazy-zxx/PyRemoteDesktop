@@ -492,7 +492,7 @@ class RemoteDesktopClient:
 
     def receive_control(self):
         # 鼠标滚轮灵敏度
-        SCROLL_NUM = 20
+        SCROLL_NUM = 50
         # 按键映射
         keycodeMapping = {}
 
